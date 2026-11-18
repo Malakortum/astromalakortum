@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เรียงดาวเคราะห์</title>
+<link href="https://fonts.googleapis.com/css2?family=Mali:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#05071a;font-family:"Mali","Leelawadee UI",Tahoma,sans-serif;color:#fff}
+  canvas{display:block;width:100vw;height:100vh}
+  video{display:none}
+  .screen{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1deg);width:min(880px,88vw);display:flex;flex-direction:column;align-items:center;text-align:center;gap:16px;padding:32px 28px;background:#fff8e7;color:#1b1b1b;border:5px solid #1b1b1b;border-radius:26px;box-shadow:12px 12px 0 #1b1b1b}
+  .screen h1{font-size:clamp(36px,6vw,72px);margin:0}
+  .screen p{font-size:clamp(18px,2.2vw,28px);margin:0;max-width:900px;line-height:1.5}
+  .btns{display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
+  button{font:inherit;font-size:clamp(20px,2.3vw,28px);padding:14px 30px;border:4px solid #1b1b1b;border-radius:16px;cursor:pointer;background:#ffcf33;color:#1b1b1b;font-weight:700;box-shadow:6px 6px 0 #1b1b1b}
+  button.alt{background:#8fd3ff}
+  button:active{transform:translate(4px,4px);box-shadow:2px 2px 0 #1b1b1b}
+  .hidden{display:none!important}
+  #status{font-size:17px;color:#555}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<canvas id="c"></canvas>
+
+<div id="start" class="screen">
+  <h1>เรียงดาวเคราะห์</h1>
+  <p><b>โบกมือ</b> ไปแตะดาวเคราะห์เพื่อหยิบ → พาไปวางในวงโคจรให้ถูกลำดับจาก ดวงอาทิตย์</p>
+  <div class="btns">
+    <button class="alt" onclick="startGame(1)">ป.1–3 (มีชื่อบอกใบ้)</button>
+    <button onclick="startGame(2)">ป.4–6 (ไม่มีใบ้)</button>
+  </div>
+  <div id="status">กำลังเปิดกล้อง...</div>
+</div>
+
+<div id="end" class="screen hidden">
+  <h1 id="endTitle"></h1>
+  <p id="endText"></p>
+  <div class="btns"><button class="alt" onclick="showStart()">เล่นอีกครั้ง</button></div>
+</div>
+
+<script type="module">
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const video = document.getElementById('video'), statusEl = document.getElementById('status');
+let W, H;
+function resize(){ W = canvas.width = innerWidth; H = canvas.height = innerHeight; if (slots.length) layout(); }
+let slots = [];
+addEventListener('resize', resize);
+
+const PLANETS = [
+  {n:'ดาวพุธ',     c1:'#d9d2c5', c2:'#7d746a', r:0.55, f:'ใกล้ดวงอาทิตย์ที่สุด และโคจรรอบเร็วที่สุด ใช้แค่ 88 วัน!'},
+  {n:'ดาวศุกร์',   c1:'#ffe3a3', c2:'#c9932f', r:0.8,  f:'ร้อนที่สุดในระบบสุริยะ ร้อนพอจะละลายตะกั่วได้!'},
+  {n:'โลก',        c1:'#6fc3ff', c2:'#1f6fb8', r:0.85, land:true, f:'บ้านของเรา ดาวดวงเดียวที่รู้ว่ามีสิ่งมีชีวิต'},
+  {n:'ดาวอังคาร', c1:'#ff9a6b', c2:'#b0401c', r:0.65, f:'ดาวเคราะห์สีแดง เพราะดินมีสนิมเหล็กเยอะ'},
+  {n:'ดาวพฤหัสบดี',c1:'#f3d2a8', c2:'#b9773f', r:1.45, bands:true, f:'ใหญ่ที่สุด! ใส่โลกเข้าไปได้มากกว่า 1,000 ใบ'},
+  {n:'ดาวเสาร์',   c1:'#f7e3a6', c2:'#c9a24f', r:1.25, ring:true, f:'มีวงแหวนสวยที่สุด ทำจากน้ำแข็งและหิน'},
+  {n:'ดาวยูเรนัส', c1:'#c9fbff', c2:'#5bbcc9', r:1.0,  f:'หมุนตะแคงข้าง เหมือนลูกบอลกลิ้งไปรอบดวงอาทิตย์'},
+  {n:'ดาวเนปจูน', c1:'#7aa2ff', c2:'#2342b0', r:0.98, f:'ไกลที่สุด และมีลมแรงที่สุดในระบบสุริยะ'},
+];
+
+let level = 1, running = false, queue = [], current = null, placed = [], mistakes = 0, elapsed = 0, lastT = 0;
+let msg = null, particles = [], stars = [];
+for (let i=0;i<120;i++) stars.push({x:Math.random(), y:Math.random(), s:Math.random()*2+0.5, p:Math.random()*6});
+
+function layout(){
+  const sunW = W*0.09, gap = (W - sunW - 30) / 8, y = H*0.78;
+  const base = Math.min(gap*0.36, H*0.06);
+  slots = PLANETS.map((p,i)=>({i, x: sunW + gap*(i+0.5), y, r: base*Math.max(0.75, Math.min(p.r,1.25)), filled: placed[i]}));
+  baseR = base;
+}
+let baseR = 30;
+function nextPlanet(){
+  if (!queue.length){ current = null; return; }
+  const i = queue.shift();
+  current = {i, x: W*(0.25+Math.random()*0.5), y: -60, vy: H*0.05, held:false, wob:0, bounce:0};
+}
+window.startGame = (lv)=>{
+  level = lv; placed = Array(8).fill(false); mistakes = 0; elapsed = 0; msg = null; particles = [];
+  queue = [...Array(8).keys()].sort(()=>Math.random()-0.5);
+  layout(); nextPlanet(); running = true; heldItem = null;
+  document.getElementById('start').classList.add('hidden');
+  document.getElementById('end').classList.add('hidden');
+};
+window.showStart = ()=>{ document.getElementById('end').classList.add('hidden'); document.getElementById('start').classList.remove('hidden'); };
+addEventListener('keydown', e=>{ if(e.code==='Space' && !running) startGame(level); });
+
+function endGame(){
+  running = false;
+  const t = Math.round(elapsed);
+  let title = mistakes===0 ? 'นักบินอวกาศระดับตำนาน!' : mistakes<=3 ? 'นักสำรวจอวกาศตัวจริง!' : 'นักดาราศาสตร์ฝึกหัด!';
+  document.getElementById('endTitle').textContent = title;
+  document.getElementById('endText').innerHTML = `เรียงครบ 8 ดวงใน <b>${t}</b> วินาที · พลาด ${mistakes} ครั้ง<br>จำง่าย ๆ: <b>พุธ ศุกร์ โลก อังคาร พฤหัส เสาร์ ยูเรนัส เนปจูน</b>`;
+  document.getElementById('end').classList.remove('hidden');
+}
+
+// ---------- input ----------
+let hand = {x:-999,y:-999,seen:false}, heldItem = null, lostT = 0, handOK = false, handPts = null;
+canvas.addEventListener('mousemove', e=>{ if(!handOK){ hand.x=e.clientX; hand.y=e.clientY; hand.seen=true; }});
+
+function handleHand(dt){
+  if (!running || !current) return;
+  if (!hand.seen){ lostT += dt; if (heldItem && lostT>0.6){ heldItem.held=false; heldItem=null; } return; }
+  lostT = 0;
+  const pr = baseR*1.3;
+  if (!heldItem && current.bounce<=0 && Math.hypot(current.x-hand.x, current.y-hand.y) < pr*1.6){ heldItem = current; current.held = true; }
+  if (heldItem){
+    heldItem.x += (hand.x-heldItem.x)*0.5; heldItem.y += (hand.y-heldItem.y)*0.5;
+    const s = slots.find(s => !s.filled && Math.hypot(s.x-heldItem.x, s.y-heldItem.y) < Math.max(s.r*1.3, 45));
+    if (s) tryPlace(s);
+  }
+}
+function tryPlace(s){
+  const p = PLANETS[current.i];
+  if (s.i === current.i){
+    placed[s.i] = true; s.filled = true; burst(s.x, s.y, p.c1);
+    msg = {ok:true, title:`ถูกต้อง! ${p.n} อยู่ลำดับที่ ${s.i+1}`, text:p.f, t:3.5};
+    heldItem = null; nextPlanet();
+    if (!current) setTimeout(endGame, 1500);
+  } else {
+    mistakes++;
+    const hint = current.i < s.i ? 'ใกล้ดวงอาทิตย์กว่านี้' : 'ไกลดวงอาทิตย์กว่านี้';
+    msg = {ok:false, title:`ยังไม่ใช่! ${p.n} อยู่${hint}นะ`, text: level===1 ? `ลองหาช่องที่เขียนว่า "${p.n}"` : 'ลองนับจากดวงอาทิตย์ดูอีกที', t:2.5};
+    heldItem.held = false; heldItem = null;
+    current.y = H*0.3; current.bounce = 0.8;
+  }
+}
+function burst(x,y,c){ for(let i=0;i<30;i++){ const a=Math.random()*Math.PI*2, v=150+Math.random()*300; particles.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,c,life:1}); } }
+
+// ---------- MediaPipe ----------
+let landmarker = null, lastVideoTime = -1;
+async function initHands(){
+  try{
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video:{width:1280,height:720,facingMode:'user'}});
+    await video.play();
+    statusEl.textContent = 'เปิดกล้องแล้ว กำลังโหลดตัวจับมือ...';
+    const {FilesetResolver, HandLandmarker} = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    const fs = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    const opts = d => ({baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task', delegate:d}, runningMode:'VIDEO', numHands:1});
+    try { landmarker = await HandLandmarker.createFromOptions(fs, opts('GPU')); }
+    catch { landmarker = await HandLandmarker.createFromOptions(fs, opts('CPU')); }
+    handOK = true;
+    statusEl.textContent = 'พร้อมเล่น! ยกมือขึ้นหน้ากล้อง (ห่างประมาณ 1–1.5 เมตร)';
+  }catch(err){
+    console.error(err);
+    statusEl.textContent = 'เปิดกล้อง/ตัวจับมือไม่ได้ — เล่นด้วยเมาส์แทนได้ · ตรวจว่าอนุญาตกล้องและต่ออินเทอร์เน็ต';
+  }
+}
+const map = p => ({x:(1-(0.5+(p.x-0.5)*1.4))*W, y:(0.5+(p.y-0.5)*1.4)*H});
+function trackHand(){
+  if (!handOK || video.readyState<2 || video.currentTime===lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  const r = landmarker.detectForVideo(video, performance.now());
+  if (!r.landmarks || !r.landmarks.length){ hand.seen=false; handPts=null; return; }
+  const L = r.landmarks[0];
+  handPts = L.map(map);
+  const t = map({x:(L[0].x+L[9].x)/2, y:(L[0].y+L[9].y)/2});
+  hand.x = hand.seen ? hand.x+(t.x-hand.x)*0.55 : t.x;
+  hand.y = hand.seen ? hand.y+(t.y-hand.y)*0.55 : t.y;
+  hand.seen = true;
+}
+
+// ---------- drawing ----------
+function sticker(x,y,w,h,fill){ ctx.fillStyle='#1b1b1b'; ctx.beginPath(); ctx.roundRect(x+7,y+7,w,h,18); ctx.fill();
+  ctx.fillStyle=fill; ctx.beginPath(); ctx.roundRect(x,y,w,h,18); ctx.fill(); ctx.lineWidth=4; ctx.strokeStyle='#1b1b1b'; ctx.stroke(); }
+
+function drawBG(t){
+  if (handOK && video.videoWidth){
+    const vw=video.videoWidth, vh=video.videoHeight, s=Math.max(W/vw,H/vh);
+    ctx.save(); ctx.translate(W,0); ctx.scale(-1,1);
+    ctx.drawImage(video,(W-vw*s)/2,(H-vh*s)/2,vw*s,vh*s); ctx.restore();
+  } else { ctx.fillStyle='#05071a'; ctx.fillRect(0,0,W,H); }
+  for (const s of stars){ ctx.globalAlpha = 0.4+0.4*Math.sin(t/600+s.p); ctx.fillStyle='#fff'; ctx.fillRect(s.x*W, s.y*H*0.6, s.s, s.s); }
+  ctx.globalAlpha = 1;
+}
+function drawPlanet(i, x, y, r, alpha=1){
+  const p = PLANETS[i];
+  ctx.save(); ctx.globalAlpha = alpha;
+  if (p.ring){ ctx.beginPath(); ctx.ellipse(x,y,r*1.9,r*0.55,-0.3,Math.PI,Math.PI*2); ctx.strokeStyle='#e8d29a'; ctx.lineWidth=r*0.25; ctx.stroke(); }
+  const g = ctx.createRadialGradient(x-r*0.35,y-r*0.35,r*0.1,x,y,r);
+  g.addColorStop(0,p.c1); g.addColorStop(1,p.c2);
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill(); ctx.lineWidth=Math.max(2,r*0.08); ctx.strokeStyle='#1b1b1b'; ctx.stroke();
+  if (p.bands){ ctx.save(); ctx.clip(); ctx.fillStyle='rgba(150,80,30,.35)'; for(const k of [-0.45,-0.1,0.3]) ctx.fillRect(x-r,y+k*r,r*2,r*0.14); ctx.restore(); }
+  if (p.land){ ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.clip(); ctx.fillStyle='#4caf50';
+    ctx.beginPath(); ctx.ellipse(x-r*0.3,y-r*0.2,r*0.35,r*0.25,0.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x+r*0.35,y+r*0.3,r*0.3,r*0.2,-0.3,0,Math.PI*2); ctx.fill(); ctx.restore(); }
+  if (p.ring){ ctx.beginPath(); ctx.ellipse(x,y,r*1.9,r*0.55,-0.3,0,Math.PI); ctx.strokeStyle='#e8d29a'; ctx.lineWidth=r*0.25; ctx.stroke(); }
+  ctx.restore();
+}
+function drawSystem(t){
+  // ดวงอาทิตย์ครึ่งดวงที่ขอบซ้าย
+  const sy = slots[0].y, sr = W*0.09;
+  const g = ctx.createRadialGradient(0,sy,sr*0.2,0,sy,sr*1.3);
+  g.addColorStop(0,'#fff6b0'); g.addColorStop(0.5,'#ffb627'); g.addColorStop(1,'rgba(255,120,0,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,sy,sr*1.3,0,Math.PI*2); ctx.fill();
+  ctx.font=`bold ${sr*0.22}px Mali,Tahoma,sans-serif`; ctx.fillStyle='#5a2a00'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  
+  // เส้นวงโคจร
+  ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=2; ctx.setLineDash([8,8]);
+  ctx.beginPath(); ctx.moveTo(sr*0.7,sy); ctx.lineTo(W-10,sy); ctx.stroke(); ctx.setLineDash([]);
+  const fs = Math.max(14, Math.min(W/60, 22));
+  for (const s of slots){
+    if (s.filled){ drawPlanet(s.i, s.x, s.y, s.r); }
+    else {
+      const hover = heldItem && Math.hypot(s.x-heldItem.x, s.y-heldItem.y) < s.r*2.2;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+      ctx.fillStyle = hover ? 'rgba(255,255,255,.35)' : 'rgba(0,0,0,.35)'; ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.8)'; ctx.lineWidth=3; ctx.setLineDash([6,6]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle='#fff'; ctx.font=`bold ${s.r*0.8}px sans-serif`; ctx.fillText(s.i+1, s.x, s.y);
+    }
+    const label = s.filled || level===1 ? PLANETS[s.i].n : '?';
+    ctx.font=`bold ${fs}px Mali,Tahoma,sans-serif`;
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.strokeText(label, s.x, s.y + s.r + fs*1.1);
+    ctx.fillStyle = s.filled ? '#ffd23f' : '#fff'; ctx.fillText(label, s.x, s.y + s.r + fs*1.1);
+  }
+}
+function drawCurrent(dt){
+  if (!current) return;
+  const c = current;
+  if (c.bounce > 0) c.bounce -= dt;
+  if (!c.held){
+    c.wob += dt*2;
+    const stopY = H*0.38;
+    if (c.y < stopY) c.y += c.vy*dt*3; else c.y = stopY + Math.sin(c.wob)*12; // ลอยรอให้หยิบ
+  }
+  const r = baseR*1.3*(c.held?1.1:1);
+  drawPlanet(c.i, c.x, c.y, r);
+  const fs = Math.max(18, r*0.5);
+  ctx.font=`bold ${fs}px Mali,Tahoma,sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.strokeText(PLANETS[c.i].n, c.x, c.y - r - fs);
+  ctx.fillStyle='#fff'; ctx.fillText(PLANETS[c.i].n, c.x, c.y - r - fs);
+}
+const BONES=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHand(){
+  if (!hand.seen) return;
+  if (handPts){
+    ctx.strokeStyle='rgba(120,220,255,.9)'; ctx.lineWidth=5; ctx.lineCap='round';
+    for (const [a,b] of BONES){ ctx.beginPath(); ctx.moveTo(handPts[a].x,handPts[a].y); ctx.lineTo(handPts[b].x,handPts[b].y); ctx.stroke(); }
+    ctx.fillStyle='#fff'; for (const p of handPts){ ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); }
+  }
+  const r = Math.min(W,H)*0.05;
+  ctx.beginPath(); ctx.arc(hand.x,hand.y,r,0,Math.PI*2);
+  ctx.strokeStyle = heldItem ? '#ffd23f' : 'rgba(255,255,255,.9)'; ctx.lineWidth=6; ctx.stroke();
+}
+function drawHUD(){
+  const f = Math.min(W,H)*0.045;
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.font=`bold ${f}px Mali,Tahoma,sans-serif`;
+  const hud=`เวลา ${Math.floor(elapsed)} วิ   วางแล้ว ${placed.filter(Boolean).length}/8`;
+  sticker(16,16,ctx.measureText(hud).width+36,f*1.6,'#fff8e7'); ctx.fillStyle='#1b1b1b';
+  ctx.fillText(hud, 32, 16+f*0.3); if(0) ctx.fillText(`เวลา ${Math.floor(elapsed)} วิ   วางแล้ว ${placed.filter(Boolean).length}/8`, 32, 16+f*0.3);
+}
+function drawMsg(dt){
+  if (!msg) return;
+  msg.t -= dt; if (msg.t<=0){ msg=null; return; }
+  const f=Math.min(W,H)*0.038, w=Math.min(W*0.85,950), h=f*3.4, x=(W-w)/2, y=H*0.04+f*2;
+  ctx.globalAlpha=Math.min(1,msg.t*2);
+  sticker(x,y,w,h,'#fff8e7'); ctx.fillStyle = msg.ok ? '#1f8a4c' : '#d0402f'; ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.font=`bold ${f}px Mali,Tahoma,sans-serif`; ctx.fillText(msg.title,W/2,y+f*0.45);
+  ctx.fillStyle='#1b1b1b'; ctx.font=`${f*0.85}px Mali,Tahoma,sans-serif`; ctx.fillText(msg.text,W/2,y+f*1.85);
+  ctx.globalAlpha=1;
+}
+function drawParticles(dt){
+  for (const p of particles){ p.vy+=500*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt*1.2;
+    ctx.globalAlpha=Math.max(0,p.life); ctx.fillStyle=p.c; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); }
+  ctx.globalAlpha=1; particles=particles.filter(p=>p.life>0);
+}
+function loop(t){
+  const dt = Math.min(0.05,(t-lastT)/1000||0); lastT=t;
+  trackHand(); drawBG(t);
+  if (running){
+    elapsed += current ? dt : 0;
+    handleHand(dt);
+    drawSystem(t); drawCurrent(dt); drawParticles(dt); drawHUD(); drawMsg(dt);
+  }
+  drawHand();
+  requestAnimationFrame(loop);
+}
+resize(); initHands(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
